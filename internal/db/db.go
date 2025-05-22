@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/peermili/backend/internal/config"
+	"github.com/inventor7/p2p/internal/config"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )

@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/peermili/backend/internal/config"
-	"github.com/peermili/backend/internal/db"
+	"github.com/inventor7/p2p/internal/config"
+	"github.com/inventor7/p2p/internal/db"
 	"go.uber.org/zap"
 )
 

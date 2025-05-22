@@ -5,7 +5,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/peermili/backend/internal/config"
+	"github.com/inventor7/p2p/internal/config"
 	"go.uber.org/zap"
 )
 

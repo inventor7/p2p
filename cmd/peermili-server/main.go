@@ -5,14 +5,13 @@ import (
 	"log"
 	"os"
 
+	"github.com/inventor7/p2p/internal/api"
+	"github.com/inventor7/p2p/internal/auth"
+	"github.com/inventor7/p2p/internal/config"
+	"github.com/inventor7/p2p/internal/db"
+	"github.com/inventor7/p2p/internal/index"
+	"github.com/inventor7/p2p/internal/p2p"
 	"github.com/joho/godotenv"
-	"github.com/peermili/backend/internal/api"
-	"github.com/peermili/backend/internal/auth"
-	"github.com/peermili/backend/internal/config"
-	"github.com/peermili/backend/internal/db"
-	"github.com/peermili/backend/internal/index"
-	"github.com/peermili/backend/internal/p2p"
-	"github.com/peermili/backend/pkg/logger"
 	"go.uber.org/fx"
 	"go.uber.org/zap"
 )
@@ -29,7 +28,6 @@ func main() {
 		fx.Provide(
 			context.Background,
 			config.NewConfig,
-			logger.NewLogger,
 			db.NewDatabase,
 		),
 
@@ -40,13 +38,19 @@ func main() {
 			p2p.NewService,
 		),
 
-		// Provide API handlers
+		// Provide API handlers and server
 		fx.Provide(
-			api.NewRouter,
 			api.NewAuthHandler,
 			api.NewIndexHandler,
 			api.NewP2PHandler,
+			api.NewRouter,
+			api.NewServer,
 		),
+
+		// Invoke server start
+		fx.Invoke(func(server *api.Server, lc fx.Lifecycle) {
+			server.Start(lc)
+		}),
 
 		// Register lifecycle hooks
 		fx.Invoke(func(*zap.Logger) {}), // Ensure logger is initialized

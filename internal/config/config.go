@@ -58,6 +58,7 @@ func NewConfig(logger *zap.Logger) (*Config, error) {
 		AllowedOrigins: []string{
 			"http://localhost:3000",
 			"http://localhost:5173",
+			"http://localhost:8081",
 		},
 
 		DBHost:     getEnvOrDefault("DB_HOST", "localhost"),
