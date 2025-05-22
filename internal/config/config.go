@@ -33,8 +33,10 @@ type Config struct {
 	DefaultDownloadPath string
 
 	// JWT configuration
-	JWTSecret     string
 	JWTExpiration int // hours
+
+	JWTSecret            string `env:"JWT_SECRET"`
+	JWTExpirationMinutes int    `env:"JWT_EXPIRATION_MINUTES" envDefault:"1440"`
 
 	// Logger
 	Logger *zap.Logger
@@ -43,7 +45,7 @@ type Config struct {
 // NewConfig creates a new configuration instance
 func NewConfig(logger *zap.Logger) (*Config, error) {
 	port, _ := strconv.Atoi(getEnvOrDefault("SERVER_PORT", "8080"))
-	dbPort, _ := strconv.Atoi(getEnvOrDefault("DB_PORT", "5432"))
+	dbPort, _ := strconv.Atoi(getEnvOrDefault("DB_PORT", "3306"))
 	maxPeers, _ := strconv.Atoi(getEnvOrDefault("MAX_PEERS", "100"))
 	maxSuperPeers, _ := strconv.Atoi(getEnvOrDefault("MAX_SUPER_PEERS", "10"))
 	heartbeat, _ := strconv.Atoi(getEnvOrDefault("HEARTBEAT_INTERVAL", "30"))
@@ -63,9 +65,9 @@ func NewConfig(logger *zap.Logger) (*Config, error) {
 
 		DBHost:     getEnvOrDefault("DB_HOST", "localhost"),
 		DBPort:     dbPort,
-		DBUser:     getEnvOrDefault("DB_USER", "postgres"),
-		DBPassword: getEnvOrDefault("DB_PASSWORD", "postgres"),
-		DBName:     getEnvOrDefault("DB_NAME", "peermili"),
+		DBUser:     getEnvOrDefault("DB_USER", "root"),
+		DBPassword: getEnvOrDefault("DB_PASSWORD", "aybinv7"),
+		DBName:     getEnvOrDefault("DB_NAME", "p2p"),
 		DBSSLMode:  getEnvOrDefault("DB_SSLMODE", "disable"),
 
 		MaxPeers:            maxPeers,
@@ -94,10 +96,20 @@ func NewConfig(logger *zap.Logger) (*Config, error) {
 }
 
 // GetDSN returns the database connection string
+// GetDSN constructs the Data Source Name for the database.
+// THIS METHOD NOW NEEDS TO GENERATE A MYSQL DSN.
 func (c *Config) GetDSN() string {
-	return fmt.Sprintf(
-		"host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		c.DBHost, c.DBPort, c.DBUser, c.DBPassword, c.DBName, c.DBSSLMode,
+	// MySQL DSN: "username:password@tcp(host:port)/dbname?charset=utf8mb4&parseTime=True&loc=Local"
+	if c.DBUser == "" || c.DBName == "" { // DBPassword can be empty for local dev
+		// c.logger.Warn("DB_USER or DB_NAME not configured, DSN will be empty.") // If logger is available
+		return ""
+	}
+	return fmt.Sprintf("%s:%s@tcp(%s:%d)/%s?charset=utf8mb4&parseTime=True&loc=Local",
+		c.DBUser,
+		c.DBPassword,
+		c.DBHost,
+		c.DBPort,
+		c.DBName,
 	)
 }
 

@@ -27,6 +27,8 @@ type Service struct {
 // PeerConnection represents an active peer connection
 type PeerConnection struct {
 	User       *db.User
+	IPAddress  string // IP address of the peer
+	ListenPort int    // Port the peer is listening on for P2P connections
 	LastPing   time.Time
 	Files      map[string]*db.File // Local cache of shared files
 	IsActive   bool
@@ -45,13 +47,16 @@ func NewService(cfg *config.Config, database *db.Database, logger *zap.Logger) *
 }
 
 // RegisterPeer registers a new peer in the network
-func (s *Service) RegisterPeer(ctx context.Context, username string, isSuper bool) (*db.User, error) {
+func (s *Service) RegisterPeer(ctx context.Context, peerName string, ipAddress string, listenPort int, isSuper bool) (*db.User, error) {
 	// Create new user record
 	user := &db.User{
 		ID:       uuid.New().String(),
-		Username: username,
+		Username: peerName, // Use peerName for Username
 		IsSuper:  isSuper,
 		LastSeen: time.Now(),
+		// IPAddress and ListenPort are not part of db.User by default.
+		// If they need to be persisted in db.User, that model needs an update.
+		// For now, they are stored in PeerConnection.
 	}
 
 	// Save to database
@@ -62,6 +67,8 @@ func (s *Service) RegisterPeer(ctx context.Context, username string, isSuper boo
 	// Initialize peer connection
 	conn := &PeerConnection{
 		User:       user,
+		IPAddress:  ipAddress,  // Store IP
+		ListenPort: listenPort, // Store Port
 		LastPing:   time.Now(),
 		Files:      make(map[string]*db.File),
 		IsActive:   true,
@@ -80,7 +87,7 @@ func (s *Service) RegisterPeer(ctx context.Context, username string, isSuper boo
 	// Start heartbeat monitoring
 	go s.monitorPeerConnection(conn)
 
-	return user, nil
+	return user, nil // Return the created user object (which includes the ID)
 }
 
 // ShareFile makes a file available for sharing
@@ -103,6 +110,58 @@ func (s *Service) ShareFile(ctx context.Context, userID string, file *db.File) e
 	s.mu.Unlock()
 
 	return nil
+}
+
+// FileSearchResult combines file details with the peer's contact information.
+type FileSearchResult struct {
+	db.File
+	PeerIPAddress  string `json:"peer_ip_address"`
+	PeerListenPort int    `json:"peer_listen_port"`
+}
+
+// SearchSharedFiles searches for globally shared files and returns them with peer contact info.
+func (s *Service) SearchSharedFiles(ctx context.Context, query string) ([]*FileSearchResult, error) {
+	var dbFiles []*db.File
+
+	// For MySQL, LIKE is often case-insensitive by default depending on collation.
+	// If specific case-insensitivity is needed and collation doesn't ensure it:
+	// err := s.db.GetDB().Where("LOWER(name) LIKE LOWER(?)", "%"+query+"%").Find(&dbFiles).Error
+	// For simplicity, assuming default MySQL behavior or case-insensitive collation:
+	searchTerm := "%" + query + "%"
+	if err := s.db.GetDB().Where("name LIKE ?", searchTerm).Find(&dbFiles).Error; err != nil { // <--- CHANGED ILIKE to LIKE
+		s.logger.Error("Failed to search shared files in DB", zap.Error(err), zap.String("query", query))
+		return nil, fmt.Errorf("failed to search shared files: %w", err)
+	}
+
+	var results []*FileSearchResult
+	s.mu.RLock() // Read lock for accessing peers maps
+	defer s.mu.RUnlock()
+
+	for _, file := range dbFiles {
+		var conn *PeerConnection
+		var found bool
+
+		if p, ok := s.peers[file.OwnerID]; ok && p.IsActive {
+			conn = p
+			found = true
+		} else if sp, ok := s.superPeers[file.OwnerID]; ok && sp.IsActive {
+			conn = sp
+			found = true
+		}
+
+		if found {
+			results = append(results, &FileSearchResult{
+				File:           *file,
+				PeerIPAddress:  conn.IPAddress,
+				PeerListenPort: conn.ListenPort,
+			})
+		} else {
+			s.logger.Debug("File found in DB but owner peer is not active or not found in memory", zap.String("fileID", file.ID), zap.String("ownerID", file.OwnerID))
+		}
+	}
+
+	s.logger.Info("Searched shared files", zap.String("query", query), zap.Int("db_matches", len(dbFiles)), zap.Int("active_results", len(results)))
+	return results, nil
 }
 
 // GetPeerFiles returns the files shared by a specific peer
@@ -180,4 +239,56 @@ func (s *Service) UpdatePeerStatus(ctx context.Context, peerID string) error {
 	}
 
 	return nil
+}
+
+// FileSearchResult combines file details with the peer's contact information.
+// type FileSearchResult struct {
+// 	db.File
+// 	PeerIPAddress  string `json:"peer_ip_address"`
+// 	PeerListenPort int    `json:"peer_listen_port"`
+// }
+
+type GetActivePeersDTO struct {
+	ID            string    `json:"id"`
+	Username      string    `json:"name"`          // Match frontend 'name'
+	IsSuperClient bool      `json:"isSuperClient"` // Match frontend
+	IPAddress     string    `json:"ipAddress"`
+	ListenPort    int       `json:"listenPort"`
+	LastSeen      time.Time `json:"lastSeen"`
+	// Add other fields your frontend Peer type expects, like sharedFilesCount
+}
+
+// GetActivePeers retrieves a list of currently active peers.
+func (s *Service) GetActivePeers(ctx context.Context) ([]GetActivePeersDTO, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	activePeers := make([]GetActivePeersDTO, 0, len(s.peers)+len(s.superPeers))
+
+	for _, conn := range s.peers {
+		if conn.IsActive {
+			activePeers = append(activePeers, GetActivePeersDTO{
+				ID:            conn.User.ID,
+				Username:      conn.User.Username,
+				IsSuperClient: conn.User.IsSuper,
+				IPAddress:     conn.IPAddress,
+				ListenPort:    conn.ListenPort,
+				LastSeen:      conn.LastPing, // or conn.User.LastSeen if that's more accurate
+			})
+		}
+	}
+	for _, conn := range s.superPeers {
+		if conn.IsActive {
+			activePeers = append(activePeers, GetActivePeersDTO{
+				ID:            conn.User.ID,
+				Username:      conn.User.Username,
+				IsSuperClient: conn.User.IsSuper,
+				IPAddress:     conn.IPAddress,
+				ListenPort:    conn.ListenPort,
+				LastSeen:      conn.LastPing,
+			})
+		}
+	}
+	s.logger.Info("Retrieved active peers", zap.Int("count", len(activePeers)))
+	return activePeers, nil
 }
